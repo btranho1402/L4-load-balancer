@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Stage 1 demo: one backend + proxy, then curl through :8080.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+PIDS=()
+cleanup() {
+  for pid in "${PIDS[@]:-}"; do
+    kill "$pid" 2>/dev/null || true
+  done
+}
+trap cleanup EXIT
+
+go build -o /tmp/l4-backend ./cmd/backend
+go build -o /tmp/l4-lb ./cmd/lb
+
+/tmp/l4-backend -name backend-1 -addr 127.0.0.1:9001 -mode http &
+PIDS+=($!)
+sleep 0.2
+
+/tmp/l4-lb -listen 127.0.0.1:8080 -backend 127.0.0.1:9001 &
+PIDS+=($!)
+
+for _ in $(seq 1 50); do
+  if curl -sf "http://127.0.0.1:8080/" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.1
+done
+
+echo "== Stage 1: single-backend proxy =="
+curl -sf "http://127.0.0.1:8080/"
+echo "OK"
