@@ -33,7 +33,7 @@ func (p *Pool) Next() (*backend.Backend, error) {
 
 	be := p.balancer.Next(p.backends)
 	if be == nil {
-		return nil, fmt.Errorf("pool %q: no backends", p.Name)
+		return nil, fmt.Errorf("pool %q: no healthy backends", p.Name)
 	}
 	return be, nil
 }

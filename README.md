@@ -7,53 +7,45 @@ Built **stage by stage** so each step is a clean GitHub commit.
 | Stage | Status | What it adds |
 |-------|--------|----------------|
 | **1** | done | TCP listen → forward to **one** backend |
-| **2** | current | Backend pool + virtual endpoint + **round-robin** |
-| **3** | next | Active health monitors (remove / restore) |
-| **4** | planned | **Least-connections** + active conn tracking |
+| **2** | done | Backend pool + virtual endpoint + **round-robin** |
+| **3** | current | Active health monitors (remove / restore) |
+| **4** | next | **Least-connections** + active conn tracking |
 | **5** | planned | YAML config, load tests, polish |
 
-## Stage 2 — pool + round-robin
+## Stage 3 — active health monitors
 
-One virtual listen address, multiple backends, connections distributed in order.
+TCP dial probes run in the background. After consecutive failures a backend is
+**removed from rotation** (`IsHealthy=false`); after consecutive successes it is
+**restored** — the pool list is never edited by hand.
 
 ```bash
-# Backends
-go run ./cmd/backend -name backend-1 -addr 127.0.0.1:9001 -mode http
-go run ./cmd/backend -name backend-2 -addr 127.0.0.1:9002 -mode http
-go run ./cmd/backend -name backend-3 -addr 127.0.0.1:9003 -mode http
-
-# Load balancer
 go run ./cmd/lb \
   -listen 127.0.0.1:8080 \
   -backend 127.0.0.1:9001 \
   -backend 127.0.0.1:9002 \
-  -backend 127.0.0.1:9003
-
-# Clients — expect backend-1, backend-2, backend-3, …
-curl http://127.0.0.1:8080/
+  -backend 127.0.0.1:9003 \
+  -health-interval 1s \
+  -health-unhealthy-after 2 \
+  -health-healthy-after 2
 ```
 
-Or: `./scripts/demo.sh`
+Or: `./scripts/demo.sh` (kills one backend and checks traffic avoids it)
 
-### Layout (Stage 2)
+### Layout (Stage 3)
 
 ```
-cmd/lb/main.go              wire listen + backends → pool + listener
-cmd/backend/main.go         demo upstream
-internal/backend/           upstream identity
-internal/balancer/          RoundRobin
-internal/pool/              backend pool
-internal/server/            virtual listen endpoint
-internal/proxy/             bidirectional TCP forward (Stage 1)
-scripts/demo.sh
+internal/health/     active TCP probes + streak thresholds
+internal/backend/    healthy flag (atomic)
+internal/balancer/   RoundRobin skips unhealthy
+…                    (pool, server, proxy unchanged in role)
 ```
 
 ### Commit this stage
 
 ```bash
 git add .
-git commit -m "stage2: backend pool with round-robin"
+git commit -m "stage3: active health monitors remove and restore backends"
 git push
 ```
 
-When you're ready, say **Stage 3** for active health monitors.
+When you're ready, say **Stage 4** for least-connections.

@@ -31,8 +31,36 @@ func TestRoundRobinCycles(t *testing.T) {
 	}
 }
 
+func TestRoundRobinSkipsUnhealthy(t *testing.T) {
+	a := backend.New("a", "127.0.0.1:1")
+	b := backend.New("b", "127.0.0.1:2")
+	c := backend.New("c", "127.0.0.1:3")
+	b.SetHealthy(false)
+
+	rr := balancer.NewRoundRobin()
+	got := make([]string, 0, 4)
+	for i := 0; i < 4; i++ {
+		be := rr.Next([]*backend.Backend{a, b, c})
+		if be == nil {
+			t.Fatal("expected backend")
+		}
+		got = append(got, be.Name)
+	}
+	want := []string{"a", "c", "a", "c"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v want %v", got, want)
+		}
+	}
+}
+
 func TestRoundRobinEmpty(t *testing.T) {
 	if balancer.NewRoundRobin().Next(nil) != nil {
 		t.Fatal("expected nil")
+	}
+	a := backend.New("a", "127.0.0.1:1")
+	a.SetHealthy(false)
+	if balancer.NewRoundRobin().Next([]*backend.Backend{a}) != nil {
+		t.Fatal("expected nil when all unhealthy")
 	}
 }

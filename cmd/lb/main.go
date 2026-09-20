@@ -1,8 +1,9 @@
-// Command lb is a Stage 2 L4 load balancer: one virtual listen endpoint,
-// a backend pool, and round-robin selection.
+// Command lb is a Stage 3 L4 load balancer: virtual endpoint, backend pool,
+// round-robin, and active TCP health monitors.
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/btranho1402/l4-load-balancer/internal/backend"
 	"github.com/btranho1402/l4-load-balancer/internal/balancer"
+	"github.com/btranho1402/l4-load-balancer/internal/health"
 	"github.com/btranho1402/l4-load-balancer/internal/pool"
 	"github.com/btranho1402/l4-load-balancer/internal/server"
 )
@@ -36,6 +38,10 @@ func (s *stringList) Set(v string) error {
 func main() {
 	listen := flag.String("listen", "127.0.0.1:8080", "virtual endpoint listen address")
 	timeout := flag.Duration("dial-timeout", 5*time.Second, "timeout dialing a backend")
+	hInterval := flag.Duration("health-interval", time.Second, "active health probe interval")
+	hTimeout := flag.Duration("health-timeout", 500*time.Millisecond, "health probe dial timeout")
+	hDown := flag.Int("health-unhealthy-after", 2, "consecutive probe failures before removing from rotation")
+	hUp := flag.Int("health-healthy-after", 2, "consecutive probe successes before restoring")
 	var backends stringList
 	flag.Var(&backends, "backend", "backend host:port (repeatable or comma-separated)")
 	flag.Parse()
@@ -59,15 +65,28 @@ func main() {
 		DialTimeout: *timeout,
 	})
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mon := health.NewMonitor(health.Config{
+		Interval:       *hInterval,
+		Timeout:        *hTimeout,
+		HealthyAfter:   *hUp,
+		UnhealthyAfter: *hDown,
+	}, bes...)
+	go mon.Run(ctx)
+
 	go func() {
 		ch := make(chan os.Signal, 1)
 		signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
 		<-ch
 		log.Printf("shutting down")
+		cancel()
 		_ = ln.Close()
 	}()
 
-	log.Printf("stage2 lb starting: listen=%s backends=%v algorithm=round_robin", *listen, []string(backends))
+	log.Printf("stage3 lb starting: listen=%s backends=%v algorithm=round_robin health=%s",
+		*listen, []string(backends), *hInterval)
 	if err := ln.ListenAndServe(); err != nil {
 		log.Printf("listener stopped: %v", err)
 	}
